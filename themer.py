@@ -22,12 +22,12 @@ def build_topicscore_query(theme):
     """
     return """
         PREFIX ost: <http://w3id.org/ost/ns#> #Open Standard for Tourism Ecosystems Data
-        SELECT DISTINCT ?topic ?topicscore WHERE {{
+        SELECT DISTINCT ?topic ?score WHERE {{
             GRAPH <{0}> {{
                 ?event <{1}> <{2}>;
-                    ost:infoUrl/<{3}> ?score.
-                ?score <{4}> ?topicscore;
-                    <{5}> ?topic.
+                    ost:infoUrl/<{3}> ?topicscore.
+                ?topicscore <{4}> ?score;
+                            <{5}> ?topic.
             }}
         }}
         """.format(os.getenv('MU_APPLICATION_GRAPH'),
@@ -146,24 +146,25 @@ def build_learnedthemes_update_query(event, learnedthemes):
     """.format(os.getenv('MU_APPLICATION_GRAPH'),
                graph.serialize(format='nt').decode('utf-8'))
 
-# Query for topic scores per theme/event
 def evaluate_theme(theme):
+    """Calculate & insert topic-fingerprint for a fiven theme"""
     themes_query = build_topicscore_query(theme)
     try:
-        topics = helpers.query(themes_query)["results"]["bindings"]
-        helpers.log(topics)
+        topicscores = helpers.query(themes_query)["results"]["bindings"]
+        helpers.log(topicscores)
     except Exception as e:
         helpers.log("Querying SPARQL-endpoint failed:\n" + str(e))
     topichash = {}
-    for topic in topics:
-        topicscore = float(topic["topicscore"]["value"])
-        topicuri = topic["topic"]["value"]
+    for topicscore in topicscores:
+        score = float(topicscore["score"]["value"])
+        topicuri = topicscore["topic"]["value"]
         try:
-            topichash[topicuri] += topicscore
+            topichash[topicuri] += score
         except KeyError:
-            topichash[topicuri] = topicscore
+            topichash[topicuri] = score
 
-    weightedhash = {k: v/sum(topichash.values()) for k, v in topichash.items()} #weighing (divide by number of events assigned to a category)
+    #weighing (divide by number of events assigned to a theme)
+    weightedhash = {k: v/sum(topichash.values()) for k, v in topichash.items()}
 
     helpers.update(build_topicprint_update_query(theme, weightedhash))
 
