@@ -8,7 +8,6 @@ import helpers
 def build_themes_query():
     """ Create a SPARQL-query for fetching all curated themes """
     return """
-        PREFIX ost: <http://w3id.org/ost/ns#> #Open Standard for Tourism Ecosystems Data
         SELECT DISTINCT ?theme WHERE {{
             GRAPH <{0}> {{
                 ?event <{1}> ?theme.
@@ -61,7 +60,6 @@ def build_topicprint_select_query():
     topicprints.
     """
     return """
-        PREFIX ost: <http://w3id.org/ost/ns#> #Open Standard for Tourism Ecosystems Data
         SELECT DISTINCT ?theme ?topic ?score WHERE {{
             GRAPH <{0}> {{
                 ?event <{1}> ?theme.
@@ -168,14 +166,15 @@ def evaluate_theme(theme):
     weightedhash = {k: v/sum(topichash.values()) for k, v in topichash.items()}
 
     helpers.update(build_topicprint_update_query(theme, weightedhash))
+    helpers.log('Calculated & inserted topic-fingerprint for theme "{}" ({} topicprints)'.format(theme, len(topichash)))
 
 def multiply_dicts(x, y):
     return {k: x.get(k, 0) * y.get(k, 0) for k in set(x) & set(y)}
 
 def run():
+    # fetch each curated theme, calculate & insert topic-fingerprint
     try:
         results = helpers.query(build_themes_query())["results"]["bindings"]
-        helpers.log(str(results))
         themes = [theme["theme"]["value"] for theme in results]
     except Exception as e:
         helpers.log("Querying SPARQL-endpoint failed:\n" + str(e))
@@ -217,7 +216,7 @@ def run():
     except Exception as e:
         helpers.log("Querying SPARQL-endpoint failed:\n" + traceback.format_exc())
 
-    # Make a map by category of an id's weights and weights by category multiplied
+    # Make a map by event of it's topicscores and weights by theme (topicprints) multiplied
     weights_by_event_by_cat = {}
     for event, topicscores_event in events.items():
         d = {theme: sum(multiply_dicts(topicscores_event, topicscores_theme).values()) \
@@ -228,3 +227,4 @@ def run():
     # TODO do this in previous loop without building dict for all events (less stack)
     for event, themes in weights_by_event_by_cat.items():
         helpers.update(build_learnedthemes_update_query(event, themes))
+        helpers.log('Learned & inserted themes for event "{}" ({} themes)'.format(event, len(themes)))
