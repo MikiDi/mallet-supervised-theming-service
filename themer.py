@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import os
 import rdflib
+import traceback
 
 import helpers
 
@@ -43,17 +44,17 @@ def build_events_query():
     """
     return """
         PREFIX ost: <http://w3id.org/ost/ns#> #Open Standard for Tourism Ecosystems Data
-        SELECT DISTINCT ?event ?topic ?topicscore WHERE {{
+        SELECT DISTINCT ?event ?topic ?score WHERE {{
             GRAPH <{0}> {{
                 ?event ost:infoUrl/<{1}> ?topicscore.
-                ?topicscore <{2}> ?score;
-                            <{3}> ?topic.
+                ?topicscore <{2}> ?topic;
+                            <{3}> ?score.
             }}
         }}
         """.format(os.getenv('MU_APPLICATION_GRAPH'),
                    "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasTopicScore",
-                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasScore",
-                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasTopic")
+                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasTopic",
+                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasScore")
 
 def build_topicprint_select_query():
     """ Create a SPARQL-query for fetching all curated themes and their
@@ -72,8 +73,8 @@ def build_topicprint_select_query():
         """.format(os.getenv('MU_APPLICATION_GRAPH'),
                    "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasCuratedTheme",
                    "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasTopicPrint",
-                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasScore",
-                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasTopic")
+                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasTopic",
+                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasScore")
 
 def build_topicprint_update_query(theme, topicscores):
     """ Create a SPARQL-query for inserting the total (weighted) scores for
@@ -147,7 +148,7 @@ def build_learnedthemes_update_query(event, learnedthemes):
                graph.serialize(format='nt').decode('utf-8'))
 
 def evaluate_theme(theme):
-    """Calculate & insert topic-fingerprint for a fiven theme"""
+    """Calculate & insert topic-fingerprint for a given theme"""
     themes_query = build_topicscore_query(theme)
     try:
         topicscores = helpers.query(themes_query)["results"]["bindings"]
@@ -186,29 +187,35 @@ def run():
             helpers.log("theme failed"+str(e))
             continue
 
-    # Build a dictionary of topicscores per curated theme
+    # Build a dictionary of topicscores ("topicprints") per curated theme
     try:
         results = helpers.query(build_topicprint_select_query())["results"]["bindings"]
         curatedthemes = {}
-        for theme, topic, score in results:
+        for result in results:
+            theme = result["theme"]["value"]
+            topic = result["topic"]["value"]
+            score = float(result["score"]["value"])
             try:
                 curatedthemes[theme][topic] = score
             except KeyError:
                 curatedthemes[theme] = {topic: score}
     except Exception as e:
-        helpers.log("Querying SPARQL-endpoint failed:\n" + str(e))
+        helpers.log("Querying SPARQL-endpoint failed:\n" + traceback.format_exc())
 
     # Build a dictionary of topicscores per event
     try:
         results = helpers.query(build_events_query())["results"]["bindings"]
         events = {}
-        for event, topic, score in results.items():
+        for result in results:
+            event = result["event"]["value"]
+            topic = result["topic"]["value"]
+            score = float(result["score"]["value"])
             try:
                 events[event][topic] = score
             except KeyError:
                 events[event] = {topic: score}
     except Exception as e:
-        helpers.log("Querying SPARQL-endpoint failed:\n" + str(e))
+        helpers.log("Querying SPARQL-endpoint failed:\n" + traceback.format_exc())
 
     # Make a map by category of an id's weights and weights by category multiplied
     weights_by_event_by_cat = {}
