@@ -37,7 +37,25 @@ def build_topicscore_query(theme):
                    "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasScore",
                    "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasTopic")
 
-def build_events_query():
+def build_count_events_query():
+    """ Create a SPARQL-query for fetching all topics and their corresponding
+    scores (weights) from all events
+    """
+    return """
+        PREFIX ost: <http://w3id.org/ost/ns#> #Open Standard for Tourism Ecosystems Data
+        SELECT DISTINCT COUNT(*) AS ?total WHERE {{
+            GRAPH <{0}> {{
+                ?event ost:infoUrl/<{1}> ?topicscore.
+                ?topicscore <{2}> ?topic;
+                            <{3}> ?score.
+            }}
+        }}
+        """.format(os.getenv('MU_APPLICATION_GRAPH'),
+                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasTopicScore",
+                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasTopic",
+                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasScore")
+
+def build_events_query(limit, offset):
     """ Create a SPARQL-query for fetching all topics and their corresponding
     scores (weights) from all events
     """
@@ -50,10 +68,15 @@ def build_events_query():
                             <{3}> ?score.
             }}
         }}
+        ORDER BY ?event
+        LIMIT  {4}
+        OFFSET {5}
         """.format(os.getenv('MU_APPLICATION_GRAPH'),
                    "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasTopicScore",
                    "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasTopic",
-                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasScore")
+                   "http://mu.semte.ch/vocabularies/ext/topic-tools/voc/hasScore",
+                   limit,
+                   offset)
 
 def build_topicprint_select_query():
     """ Create a SPARQL-query for fetching all curated themes and their
@@ -209,35 +232,42 @@ def run():
         except KeyError:
             curatedthemes[theme] = {topic: score}
 
-    # Build a dictionary of topicscores per event
+    delta = 5000 #how many to learn in one run (sparql queries capped @ 10k)
     try:
-        results = helpers.query(build_events_query())["results"]["bindings"]
-        helpers.log('Queried topicscores for all curated themes ({} topicscores)'.format(len(results)))
+        count = int(helpers.query(build_count_events_query())["results"]["bindings"][0]["total"]["value"])
     except Exception as e:
-        helpers.log("Querying SPARQL-endpoint failed, exiting:\n" + str(e))
+        helpers.log("Failed to determine total number of events\n" + str(e))
         return
-    events = {}
-    for result in results:
-        event = result["event"]["value"]
-        topic = result["topic"]["value"]
-        score = float(result["score"]["value"])
+    for offset in range(0, count, delta):
+        # Build a dictionary of topicscores per event
         try:
-            events[event][topic] = score
-        except KeyError:
-            events[event] = {topic: score}
-
-    # Make a map by event of it's topicscores and weights by theme (topicprints) multiplied
-    weights_by_event_by_cat = {}
-    for event, topicscores_event in events.items():
-        d = {theme: sum(multiply_dicts(topicscores_event, topicscores_theme).values()) \
-            for theme, topicscores_theme in curatedthemes.items()}
-        weights_by_event_by_cat[event] = d
-
-    # Add learned themes to graph, event by event
-    # TODO do this in previous loop without building dict for all events (less stack)
-    for event, themes in weights_by_event_by_cat.items():
-        try:
-            helpers.update(build_learnedthemes_update_query(event, themes))
-            helpers.log('Learned & inserted themes for event "{}" ({} themes)'.format(event, len(themes)))
+            results = helpers.query(build_events_query(delta, offset))["results"]["bindings"]
+            helpers.log('Queried topicscores for all curated themes ({} topicscores)'.format(len(results)))
         except Exception as e:
-            helpers.log("Querying SPARQL-endpoint failed:\n" + str(e))
+            helpers.log("Querying SPARQL-endpoint failed, exiting:\n" + str(e))
+            return
+        events = {}
+        for result in results:
+            event = result["event"]["value"]
+            topic = result["topic"]["value"]
+            score = float(result["score"]["value"])
+            try:
+                events[event][topic] = score
+            except KeyError:
+                events[event] = {topic: score}
+
+        # Make a map by event of it's topicscores and weights by theme (topicprints) multiplied
+        weights_by_event_by_cat = {}
+        for event, topicscores_event in events.items():
+            d = {theme: sum(multiply_dicts(topicscores_event, topicscores_theme).values()) \
+                for theme, topicscores_theme in curatedthemes.items()}
+            weights_by_event_by_cat[event] = d
+
+        # Add learned themes to graph, event by event
+        # TODO do this in previous loop without building dict for all events (less stack)
+        for event, themes in weights_by_event_by_cat.items():
+            try:
+                helpers.update(build_learnedthemes_update_query(event, themes))
+                helpers.log('Learned & inserted themes for event "{}" ({} themes)'.format(event, len(themes)))
+            except Exception as e:
+                helpers.log("Querying SPARQL-endpoint failed:\n" + str(e))
